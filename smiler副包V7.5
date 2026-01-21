@@ -1,0 +1,221 @@
+local gameStartTime = nil
+local timeThreshold = 1
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local isFirstDoorOpened = false
+local hasSpawnedInRoom = false
+local Players = game:GetService("Players")
+local plr = Players.LocalPlayer
+
+repeat task.wait() until ReplicatedStorage:FindFirstChild("GameData") and ReplicatedStorage.GameData:FindFirstChild("LatestRoom")
+
+local function isForbiddenState()
+local hasUpperSeek = workspace:FindFirstChild("Seek", true) ~= nil
+local hasLowerSeek = workspace:FindFirstChild("seek", true) ~= nil
+local hasRoom50 = workspace.CurrentRooms and workspace.CurrentRooms:FindFirstChild("50") ~= nil
+return hasUpperSeek or hasLowerSeek or hasRoom50
+end
+
+local function checkCondition()
+if isForbiddenState() then return false end
+if not gameStartTime then return false end
+local gameTime = tick() - gameStartTime
+return not (gameTime < timeThreshold or hasSpawnedInRoom)
+end
+
+local function setSealPartsToRed(entityModel)
+local targetPartNames = {"Cross", "Chain", "Seal", "十字架", "锁链", "法阵"}
+for _, part in ipairs(entityModel:GetDescendants()) do
+local isTarget = false
+for _, name in ipairs(targetPartNames) do
+if string.find(string.lower(part.Name), string.lower(name)) then
+isTarget = true
+break
+end
+end
+if isTarget then
+if part:IsA("BasePart") then
+part.BrickColor = BrickColor.Red()
+part.Material = Enum.Material.Neon
+elseif part:IsA("Decal") then
+part.Color3 = Color3.new(1, 0, 0)
+end
+end
+end
+end
+
+ReplicatedStorage.GameData.LatestRoom.Changed:Connect(function()
+if isForbiddenState() then
+hasSpawnedInRoom = false
+return
+end
+
+if not isFirstDoorOpened then
+gameStartTime = tick()
+isFirstDoorOpened = true
+hasSpawnedInRoom = false
+return
+end
+
+hasSpawnedInRoom = false
+
+if checkCondition() then
+if isForbiddenState() then
+return
+end
+
+local spawner = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/Utilities/main/Doors/Entity%20Spawner/V2/Source.lua"))()
+local entity = spawner.Create({
+Entity = {
+Name = "smiler",
+Asset = "rbxassetid://17071491370",
+HeightOffset = 1
+},
+Lights = {
+Flicker = {Enabled = true, Duration = 10},
+Shatter = true,
+Repair = false
+},
+Earthquake = {Enabled = false},
+CameraShake = {Enabled = true, Range = 100, Values = {3, 2, 0.1, 1}},
+Movement = {Speed = 350, Delay = 12, Reversed = false},
+Rebounding = {
+Enabled = true,
+Type = "Ambush",
+Min = 11,
+Max = 11,
+Delay = 0
+},
+Damage = {Enabled = true, Range = 40, Amount = 100},
+Crucifixion = {Enabled = true, Range = 40, Resist = false, Break = true},
+Death = {
+Type = "Curious",
+Hints = {"You died from smiler", "He doesn't seem to be from this hotel, but he somehow got here."},
+Cause = "smiler"
+}
+})
+
+local reboundCount = 0
+local pauseDuration = 4
+local isPaused = false
+local pauseThread = nil
+local originalSpawnPos = nil
+local isReboundCompleted = false
+
+local function monitorReboundCompletion()
+local humanoid = entity.Instance:FindFirstChildOfClass("Humanoid")
+if not humanoid then return end
+humanoid.Running:Connect(function(speed)
+if speed <= 0 and not isPaused and entity.Instance:FindFirstChild("HumanoidRootPart") then
+isReboundCompleted = true
+end
+end)
+end
+
+local function setEntityVisible(visible)
+for _, part in ipairs(entity.Instance:GetDescendants()) do
+if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("SpecialMesh") then
+part.Transparency = visible and 0 or 1
+end
+end
+local humanoid = entity.Instance:FindFirstChildOfClass("Humanoid")
+local hitbox = entity.Instance:FindFirstChild("Hitbox")
+if humanoid then humanoid.Health = visible and 100 or 0 end
+if hitbox and hitbox:IsA("BasePart") then hitbox.CanCollide = visible end
+end
+
+entity:SetCallback("OnSpawned", function()
+if isForbiddenState() then
+entity:Despawn()
+return
+end
+local entityModel = entity.Instance
+local entityRoot = entityModel:FindFirstChild("HumanoidRootPart")
+if entityRoot then
+originalSpawnPos = entityRoot.CFrame
+end
+monitorReboundCompletion()
+if entityModel then
+entityModel:GetAttributeChangedSignal("BeingSentToBrazil"):Connect(function()
+if entityModel:GetAttribute("BeingSentToBrazil") then
+setSealPartsToRed(entityModel)
+end
+end)
+end
+end)
+
+task.spawn(function()
+while entity and entity.Instance and entity.Instance.Parent do
+task.wait(0.1)
+if isReboundCompleted and not isPaused and reboundCount < 11 then
+isReboundCompleted = false
+reboundCount += 1
+
+local entityRoot = entity.Instance:FindFirstChild("HumanoidRootPart")
+local humanoid = entity.Instance:FindFirstChildOfClass("Humanoid")
+if entityRoot and humanoid then
+entityRoot.CFrame = originalSpawnPos
+setEntityVisible(false)
+
+isPaused = true
+humanoid.WalkSpeed = 0
+humanoid.JumpPower = 0
+humanoid:SetStateEnabled(Enum.HumanoidStateType.Walking, false)
+humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, false)
+
+if pauseThread then task.cancel(pauseThread) end
+pauseThread = task.delay(pauseDuration, function()
+setEntityVisible(true)
+humanoid.WalkSpeed = 16
+humanoid.JumpPower = 50
+humanoid:SetStateEnabled(Enum.HumanoidStateType.Walking, true)
+humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+isPaused = false
+pauseThread = nil
+end)
+end
+
+if reboundCount >= 11 then
+setEntityVisible(false)
+task.wait(0.5)
+entity:Despawn()
+break
+end
+end
+end
+end)
+
+entity:SetCallback("OnDespawned", function()
+local Lighting = game:GetService("Lighting")
+local originalAmbient = Lighting.Ambient
+local originalOutdoorAmbient = Lighting.OutdoorAmbient
+local originalBrightness = Lighting.Brightness
+Lighting.Ambient = originalAmbient
+Lighting.OutdoorAmbient = originalOutdoorAmbient
+Lighting.Brightness = originalBrightness
+for _, eff in ipairs(Lighting:GetChildren()) do
+if eff:IsA("ColorCorrectionEffect") or eff:IsA("BloomEffect") then
+eff:Destroy()
+end
+end
+
+local achievementGiver
+pcall(function()
+achievementGiver = loadstring(game:HttpGet("https://raw.githubusercontent.com/Tupoi-Scripts/Entity-Spawner/refs/heads/main/AchievementSystem.lua"))()
+end)
+if achievementGiver then
+achievementGiver({
+Title = "Last Chance to Look Away",
+Desc = "Why are you running?",
+Reason = "Survive the rare Entity called Dear God.",
+Image = "rbxassetid://11394027278"
+})
+end
+end)
+
+entity:Run()
+hasSpawnedInRoom = true
+gameStartTime = tick()
+end
+end)
+
+while task.wait(0.1) do end
